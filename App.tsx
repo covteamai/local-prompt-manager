@@ -276,7 +276,7 @@ const Layout: React.FC<{
         <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
           <div className="flex items-center font-bold text-slate-800 dark:text-slate-100">
             <BotIcon className="w-5 h-5 mr-2 text-blue-600 dark:text-blue-400" />
-            <span className="whitespace-nowrap">Prompt Mgr</span>
+            <span className="whitespace-nowrap">Local Prompt Manager</span>
           </div>
           <button onClick={() => setSidebarOpen(false)} className="lg:hidden">
              <X className="w-5 h-5 text-slate-500" />
