@@ -8,9 +8,39 @@ declare global {
   }
 }
 
+type ChangeListener = (isDirty: boolean) => void;
+
 export class DatabaseService {
   private db: any = null;
   private fileHandle: FileSystemFileHandle | null = null;
+  private isDirty: boolean = false;
+  private listeners: ChangeListener[] = [];
+
+  subscribe(listener: ChangeListener) {
+    this.listeners.push(listener);
+    listener(this.isDirty);
+    return () => {
+      this.listeners = this.listeners.filter(l => l !== listener);
+    };
+  }
+
+  private notify() {
+    this.listeners.forEach(l => l(this.isDirty));
+  }
+
+  private markDirty() {
+    if (!this.isDirty) {
+      this.isDirty = true;
+      this.notify();
+    }
+  }
+
+  private markClean() {
+    if (this.isDirty) {
+      this.isDirty = false;
+      this.notify();
+    }
+  }
 
   async init(data?: Uint8Array): Promise<void> {
     if (!window.initSqlJs) {
@@ -27,6 +57,9 @@ export class DatabaseService {
       this.db = new SQL.Database();
       this.initSchema();
     }
+    
+    this.isDirty = false;
+    this.notify();
   }
 
   // Set the file handle for subsequent saves
@@ -44,7 +77,9 @@ export class DatabaseService {
 
   export(): Uint8Array {
     if (!this.db) throw new Error("Database not initialized");
-    return this.db.export();
+    const data = this.db.export();
+    this.markClean();
+    return data;
   }
 
   // Save directly to disk if handle exists, otherwise return false
@@ -56,6 +91,7 @@ export class DatabaseService {
       const writable = await this.fileHandle.createWritable();
       await writable.write(data);
       await writable.close();
+      this.markClean();
       return true;
     } catch (e) {
       console.error("Error saving to disk:", e);
@@ -118,17 +154,20 @@ export class DatabaseService {
     const stmt = this.db.prepare("INSERT INTO projects (name, description, updated_at) VALUES (?, ?, datetime('now'))");
     stmt.run([name, description]);
     stmt.free();
+    this.markDirty();
   }
 
   updateProject(id: number, name: string, description: string): void {
     const stmt = this.db.prepare("UPDATE projects SET name = ?, description = ?, updated_at = datetime('now') WHERE id = ?");
     stmt.run([name, description, id]);
     stmt.free();
+    this.markDirty();
   }
 
   deleteProject(id: number): void {
     // Enabling foreign key support is good practice, but manual cleanup ensures consistency if not enabled
     this.db.run("DELETE FROM projects WHERE id = ?", [id]);
+    this.markDirty();
   }
 
   // --- Bots ---
@@ -150,16 +189,19 @@ export class DatabaseService {
     const stmt = this.db.prepare("INSERT INTO bots (project_id, name, description, updated_at) VALUES (?, ?, ?, datetime('now'))");
     stmt.run([projectId, name, description]);
     stmt.free();
+    this.markDirty();
   }
 
   updateBot(id: number, name: string, description: string): void {
     const stmt = this.db.prepare("UPDATE bots SET name = ?, description = ?, updated_at = datetime('now') WHERE id = ?");
     stmt.run([name, description, id]);
     stmt.free();
+    this.markDirty();
   }
 
   deleteBot(id: number): void {
     this.db.run("DELETE FROM bots WHERE id = ?", [id]);
+    this.markDirty();
   }
 
   // --- Prompts ---
@@ -186,6 +228,7 @@ export class DatabaseService {
     stmt.run([botId, name, defaultParams]);
     const id = this.db.exec("SELECT last_insert_rowid()")[0].values[0][0];
     stmt.free();
+    this.markDirty();
     return id;
   }
 
@@ -206,10 +249,12 @@ export class DatabaseService {
 
     const query = `UPDATE prompts SET ${updates.join(', ')} WHERE id = ?`;
     this.db.run(query, values);
+    this.markDirty();
   }
 
   deletePrompt(id: number): void {
     this.db.run("DELETE FROM prompts WHERE id = ?", [id]);
+    this.markDirty();
   }
 
   duplicatePrompt(id: number): void {
@@ -229,6 +274,7 @@ export class DatabaseService {
       prompt.params
     ]);
     stmt.free();
+    this.markDirty();
   }
 
   // Helper to map SQL.js results to objects

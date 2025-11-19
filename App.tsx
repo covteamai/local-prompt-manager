@@ -24,7 +24,8 @@ import {
   CheckCircle2,
   RefreshCw,
   Edit2,
-  Pencil
+  Pencil,
+  Circle
 } from 'lucide-react';
 import { Loader } from './components/Loader';
 import { Button } from './components/Button';
@@ -216,7 +217,13 @@ const SidebarItem: React.FC<{ to: string, icon: React.ReactNode, label: string, 
 
 // --- Layout ---
 
-const Layout: React.FC<{ children: React.ReactNode, onSaveDb: () => void, isSaving: boolean, saveStatus: string }> = ({ children, onSaveDb, isSaving, saveStatus }) => {
+const Layout: React.FC<{ 
+  children: React.ReactNode, 
+  onSaveDb: () => void, 
+  isSaving: boolean, 
+  saveStatus: string,
+  isDirty: boolean 
+}> = ({ children, onSaveDb, isSaving, saveStatus, isDirty }) => {
   const { refresh, triggerRefresh } = useApp();
   const projects = useProjects(refresh);
   const navigate = useNavigate();
@@ -312,13 +319,19 @@ const Layout: React.FC<{ children: React.ReactNode, onSaveDb: () => void, isSavi
           <div className="flex gap-2">
             <Button 
               onClick={onSaveDb} 
-              variant={hasHandle ? "primary" : "outline"}
+              variant={hasHandle ? "primary" : (isDirty ? "primary" : "outline")}
               size="sm" 
-              className="flex-1 justify-center"
+              className={`flex-1 justify-center relative ${isDirty && !hasHandle ? "ring-2 ring-offset-1 ring-amber-300 dark:ring-amber-500" : ""}`}
               icon={isSaving ? <RefreshCw className="w-4 h-4 animate-spin"/> : (hasHandle ? <Save className="w-4 h-4" /> : <Download className="w-4 h-4" />)}
               disabled={isSaving}
             >
               {isSaving ? 'Saving...' : (hasHandle ? 'Save' : 'Download DB')}
+              {isDirty && (
+                <span className="absolute top-0 right-0 -mt-1 -mr-1 flex h-3 w-3">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-3 w-3 bg-amber-500"></span>
+                </span>
+              )}
             </Button>
              <Button 
               onClick={() => setDarkMode(!darkMode)} 
@@ -333,6 +346,11 @@ const Layout: React.FC<{ children: React.ReactNode, onSaveDb: () => void, isSavi
              <div className="mt-1 text-xs text-center text-green-600 dark:text-green-400 animate-fade-in">
                {saveStatus}
              </div>
+          )}
+          {isDirty && !saveStatus && (
+            <div className="mt-1 text-xs text-center text-amber-600 dark:text-amber-400 animate-fade-in">
+              Unsaved changes
+            </div>
           )}
         </div>
       </div>
@@ -949,6 +967,14 @@ const Main = () => {
   const [refresh, setRefresh] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
   const [saveStatus, setSaveStatus] = useState('');
+  const [isDbDirty, setIsDbDirty] = useState(false);
+
+  useEffect(() => {
+    const unsubscribe = dbService.subscribe((dirty) => {
+      setIsDbDirty(dirty);
+    });
+    return unsubscribe;
+  }, []);
 
   const triggerRefresh = useCallback(() => {
     setRefresh(prev => prev + 1);
@@ -992,7 +1018,7 @@ const Main = () => {
   return (
     <AppContext.Provider value={{ refresh, triggerRefresh }}>
       <HashRouter>
-        <Layout onSaveDb={handleSaveDb} isSaving={isSaving} saveStatus={saveStatus}>
+        <Layout onSaveDb={handleSaveDb} isSaving={isSaving} saveStatus={saveStatus} isDirty={isDbDirty}>
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/project/:projectId" element={<ProjectDetail />} />
