@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useContext } from 'react';
 import { HashRouter, Routes, Route, useNavigate, useParams, Link, useLocation } from 'react-router-dom';
 import { 
   Folder, 
@@ -16,13 +16,29 @@ import {
   X,
   ExternalLink,
   Moon,
-  Sun
+  Sun,
+  AlertTriangle,
+  ArrowLeft
 } from 'lucide-react';
 import { Loader } from './components/Loader';
 import { Button } from './components/Button';
 import { JsonEditor } from './components/JsonEditor';
 import { dbService } from './services/DatabaseService';
 import { Project, Bot, Prompt } from './types';
+
+// --- Context ---
+
+interface AppContextType {
+  refresh: number;
+  triggerRefresh: () => void;
+}
+
+const AppContext = React.createContext<AppContextType>({
+  refresh: 0,
+  triggerRefresh: () => {},
+});
+
+const useApp = () => useContext(AppContext);
 
 // --- Hooks ---
 
@@ -52,22 +68,61 @@ const usePrompts = (botId: number | undefined, refreshTrigger: number) => {
 
 // --- Components ---
 
-const ConfirmModal: React.FC<{ 
-  isOpen: boolean; 
-  title: string; 
-  message: string; 
-  onConfirm: () => void; 
-  onCancel: () => void; 
-}> = ({ isOpen, title, message, onConfirm, onCancel }) => {
+const DeleteResourceModal: React.FC<{
+  isOpen: boolean;
+  resourceType: 'Project' | 'Bot' | 'Prompt';
+  resourceName: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}> = ({ isOpen, resourceType, resourceName, onConfirm, onCancel }) => {
+  const [input, setInput] = useState('');
+  
+  useEffect(() => {
+    if (isOpen) setInput('');
+  }, [isOpen]);
+
   if (!isOpen) return null;
+
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-slate-800 rounded-lg p-6 max-w-sm w-full shadow-xl border border-slate-200 dark:border-slate-700">
-        <h3 className="text-lg font-bold text-slate-900 dark:text-white mb-2">{title}</h3>
-        <p className="text-slate-600 dark:text-slate-300 mb-6">{message}</p>
+      <div className="bg-white dark:bg-slate-800 rounded-lg p-6 max-w-md w-full shadow-xl border border-slate-200 dark:border-slate-700">
+        <div className="flex items-start mb-4">
+          <div className="bg-red-100 dark:bg-red-900/30 p-2 rounded-full mr-3">
+            <AlertTriangle className="w-6 h-6 text-red-600 dark:text-red-400" />
+          </div>
+          <div>
+            <h3 className="text-lg font-bold text-slate-900 dark:text-white">Delete {resourceType}</h3>
+            <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">
+              This action cannot be undone. This will permanently delete the {resourceType.toLowerCase()} <strong>{resourceName}</strong>
+              {resourceType === 'Project' ? ' and all associated bots and prompts' : ''}
+              {resourceType === 'Bot' ? ' and all associated prompts' : ''}.
+            </p>
+          </div>
+        </div>
+        
+        <div className="mb-6">
+          <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
+            Please type <span className="font-mono font-bold select-all">{resourceName}</span> to confirm.
+          </label>
+          <input
+            type="text"
+            value={input}
+            onChange={(e) => setInput(e.target.value)}
+            className="w-full border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 dark:text-white rounded-md px-3 py-2 focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-colors"
+            placeholder={resourceName}
+            autoFocus
+          />
+        </div>
+
         <div className="flex justify-end space-x-3">
           <Button variant="ghost" onClick={onCancel}>Cancel</Button>
-          <Button variant="danger" onClick={onConfirm}>Confirm</Button>
+          <Button
+            variant="danger"
+            disabled={input !== resourceName}
+            onClick={onConfirm}
+          >
+            Delete {resourceType}
+          </Button>
         </div>
       </div>
     </div>
@@ -91,7 +146,7 @@ const SidebarItem: React.FC<{ to: string, icon: React.ReactNode, label: string, 
 // --- Layout ---
 
 const Layout: React.FC<{ children: React.ReactNode, onSaveDb: () => void }> = ({ children, onSaveDb }) => {
-  const [refresh, setRefresh] = useState(0);
+  const { refresh, triggerRefresh } = useApp();
   const projects = useProjects(refresh);
   const navigate = useNavigate();
   const location = useLocation();
@@ -117,8 +172,6 @@ const Layout: React.FC<{ children: React.ReactNode, onSaveDb: () => void }> = ({
       localStorage.setItem('theme', 'light');
     }
   }, [darkMode]);
-
-  const triggerRefresh = () => setRefresh(prev => prev + 1);
 
   const handleCreateProject = () => {
     if (!newProjectName.trim()) return;
@@ -230,7 +283,9 @@ const Layout: React.FC<{ children: React.ReactNode, onSaveDb: () => void }> = ({
 // --- Pages ---
 
 const Dashboard = () => {
-  const projects = useProjects(0);
+  const { refresh } = useApp();
+  const projects = useProjects(refresh);
+  
   return (
     <div>
       <h1 className="text-2xl font-bold text-slate-900 dark:text-white mb-6">Dashboard</h1>
@@ -251,34 +306,82 @@ const Dashboard = () => {
 const ProjectDetail = () => {
   const { projectId } = useParams();
   const id = parseInt(projectId || '0');
-  const [trigger, setTrigger] = useState(0);
-  const bots = useBots(id, trigger);
+  const { refresh, triggerRefresh } = useApp();
+  const navigate = useNavigate();
+  
+  const [project, setProject] = useState<Project | null>(null);
   const [newBotName, setNewBotName] = useState('');
   const [showNewBot, setShowNewBot] = useState(false);
+  
+  // Deletion State
+  const [deleteProjectModalOpen, setDeleteProjectModalOpen] = useState(false);
+  const [botToDelete, setBotToDelete] = useState<Bot | null>(null);
 
-  const handleCreate = () => {
+  // Fetch Project Details
+  useEffect(() => {
+    const p = dbService.getProject(id);
+    setProject(p);
+  }, [id, refresh]);
+
+  const bots = useBots(id, refresh);
+
+  const handleCreateBot = () => {
     if(!newBotName.trim()) return;
     dbService.createBot(id, newBotName, '');
     setNewBotName('');
     setShowNewBot(false);
-    setTrigger(t => t + 1);
+    triggerRefresh();
   };
 
-  const handleDelete = (botId: number) => {
-    if(confirm('Are you sure?')) {
-      dbService.deleteBot(botId);
-      setTrigger(t => t + 1);
+  const handleDeleteBotRequest = (bot: Bot) => {
+    setBotToDelete(bot);
+  };
+
+  const confirmDeleteBot = () => {
+    if (botToDelete) {
+      dbService.deleteBot(botToDelete.id);
+      triggerRefresh();
+      setBotToDelete(null);
     }
   };
+
+  const handleDeleteProject = () => {
+    dbService.deleteProject(id);
+    triggerRefresh();
+    navigate('/');
+  };
+
+  if (!project) {
+     return (
+       <div className="text-center pt-20">
+         <div className="inline-block p-4 bg-red-50 dark:bg-red-900/20 rounded-full text-red-500 dark:text-red-400 mb-4">
+           <AlertTriangle className="w-8 h-8" />
+         </div>
+         <h2 className="text-xl font-bold text-slate-900 dark:text-white">Project Not Found</h2>
+         <p className="text-slate-500 dark:text-slate-400 mt-2">This project may have been deleted.</p>
+         <Link to="/" className="inline-block mt-4 text-blue-600 hover:underline">Return to Dashboard</Link>
+       </div>
+     );
+  }
 
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
         <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center">
-          <Folder className="w-6 h-6 mr-2 text-slate-400" />
-          Project Bots
+          <Folder className="w-6 h-6 mr-3 text-slate-400" />
+          {project.name}
         </h1>
-        <Button icon={<Plus className="w-4 h-4"/>} onClick={() => setShowNewBot(true)}>New Bot</Button>
+        <div className="flex gap-3">
+           <Button 
+             variant="danger" 
+             size="sm" 
+             onClick={() => setDeleteProjectModalOpen(true)}
+             icon={<Trash2 className="w-4 h-4"/>}
+           >
+             Delete Project
+           </Button>
+           <Button icon={<Plus className="w-4 h-4"/>} onClick={() => setShowNewBot(true)}>New Bot</Button>
+        </div>
       </div>
 
       {showNewBot && (
@@ -289,8 +392,9 @@ const ProjectDetail = () => {
               className="flex-1 border border-slate-300 dark:border-slate-600 bg-transparent dark:text-white rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
               value={newBotName}
               onChange={e => setNewBotName(e.target.value)}
+              autoFocus
             />
-            <Button onClick={handleCreate}>Save</Button>
+            <Button onClick={handleCreateBot}>Save</Button>
             <Button variant="ghost" onClick={() => setShowNewBot(false)}>Cancel</Button>
         </div>
       )}
@@ -305,7 +409,7 @@ const ProjectDetail = () => {
         {bots.map(bot => (
           <div key={bot.id} className="bg-white dark:bg-slate-800 p-5 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 hover:border-blue-300 dark:hover:border-blue-500 transition-colors group relative">
              <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity">
-               <button onClick={(e) => { e.preventDefault(); handleDelete(bot.id); }} className="text-slate-400 hover:text-red-500 dark:hover:text-red-400">
+               <button onClick={(e) => { e.preventDefault(); handleDeleteBotRequest(bot); }} className="text-slate-400 hover:text-red-500 dark:hover:text-red-400">
                  <Trash2 className="w-4 h-4" />
                </button>
              </div>
@@ -327,6 +431,24 @@ const ProjectDetail = () => {
           </div>
         ))}
       </div>
+
+      {/* Delete Project Modal */}
+      <DeleteResourceModal 
+        isOpen={deleteProjectModalOpen}
+        resourceType="Project"
+        resourceName={project.name}
+        onConfirm={handleDeleteProject}
+        onCancel={() => setDeleteProjectModalOpen(false)}
+      />
+
+      {/* Delete Bot Modal */}
+      <DeleteResourceModal 
+        isOpen={!!botToDelete}
+        resourceType="Bot"
+        resourceName={botToDelete?.name || ''}
+        onConfirm={confirmDeleteBot}
+        onCancel={() => setBotToDelete(null)}
+      />
     </div>
   );
 };
@@ -335,21 +457,30 @@ const BotDetail = () => {
   const { projectId, botId } = useParams();
   const pId = parseInt(projectId || '0');
   const bId = parseInt(botId || '0');
-  const [trigger, setTrigger] = useState(0);
-  const prompts = usePrompts(bId, trigger);
+  const { triggerRefresh, refresh } = useApp();
+  const prompts = usePrompts(bId, refresh);
   const navigate = useNavigate();
+
+  // Deletion State
+  const [promptToDelete, setPromptToDelete] = useState<Prompt | null>(null);
 
   const handleCreate = () => {
     const id = dbService.createPrompt(bId, "New Prompt");
+    triggerRefresh();
     navigate(`/project/${pId}/bot/${bId}/prompt/${id}`);
   };
 
-  const handleDelete = (id: number, e: React.MouseEvent) => {
+  const handleDeleteRequest = (prompt: Prompt, e: React.MouseEvent) => {
     e.stopPropagation();
     e.preventDefault();
-    if (confirm("Delete this prompt?")) {
-      dbService.deletePrompt(id);
-      setTrigger(t => t + 1);
+    setPromptToDelete(prompt);
+  };
+
+  const confirmDeletePrompt = () => {
+    if (promptToDelete) {
+      dbService.deletePrompt(promptToDelete.id);
+      triggerRefresh();
+      setPromptToDelete(null);
     }
   };
 
@@ -357,7 +488,7 @@ const BotDetail = () => {
     e.stopPropagation();
     e.preventDefault();
     dbService.duplicatePrompt(id);
-    setTrigger(t => t + 1);
+    triggerRefresh();
   };
 
   return (
@@ -399,191 +530,225 @@ const BotDetail = () => {
                 </div>
               </div>
               <div className="flex items-center space-x-2">
-                <button onClick={(e) => handleDuplicate(prompt.id, e)} className="p-2 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20">
+                <button onClick={(e) => handleDuplicate(prompt.id, e)} className="p-2 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400">
                   <Copy className="w-4 h-4" />
                 </button>
-                 <button onClick={(e) => handleDelete(prompt.id, e)} className="p-2 text-slate-400 hover:text-red-600 dark:hover:text-red-400 rounded hover:bg-red-50 dark:hover:bg-red-900/20">
+                <button onClick={(e) => handleDeleteRequest(prompt, e)} className="p-2 text-slate-400 hover:text-red-600 dark:hover:text-red-400">
                   <Trash2 className="w-4 h-4" />
                 </button>
+                <ChevronRight className="w-4 h-4 text-slate-300" />
               </div>
             </div>
           </Link>
         ))}
       </div>
+
+      {/* Delete Prompt Modal */}
+      <DeleteResourceModal 
+        isOpen={!!promptToDelete}
+        resourceType="Prompt"
+        resourceName={promptToDelete?.name || ''}
+        onConfirm={confirmDeletePrompt}
+        onCancel={() => setPromptToDelete(null)}
+      />
     </div>
   );
 };
 
 const PromptEditor = () => {
   const { projectId, botId, promptId } = useParams();
-  const pId = parseInt(projectId || '0');
-  const bId = parseInt(botId || '0');
-  const prId = parseInt(promptId || '0');
+  const id = parseInt(promptId || '0');
   const navigate = useNavigate();
-
+  const { triggerRefresh } = useApp();
+  
   const [prompt, setPrompt] = useState<Prompt | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [hasChanges, setHasChanges] = useState(false);
-  const [copied, setCopied] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  
+  // Form State
+  const [name, setName] = useState('');
+  const [systemPrompt, setSystemPrompt] = useState('');
+  const [devPrompt, setDevPrompt] = useState(''); // Mapped to user_prompt in DB
+  const [notes, setNotes] = useState('');         // Mapped to dev_prompt in DB
+  const [params, setParams] = useState('');
 
   useEffect(() => {
-    const p = dbService.getPrompt(prId);
-    setPrompt(p);
-    setLoading(false);
-  }, [prId]);
-
-  const handleChange = (field: keyof Prompt, value: string) => {
-    if (!prompt) return;
-    setPrompt({ ...prompt, [field]: value });
-    setHasChanges(true);
-  };
+    const p = dbService.getPrompt(id);
+    if (p) {
+      setPrompt(p);
+      setName(p.name);
+      setSystemPrompt(p.system_prompt || '');
+      setDevPrompt(p.user_prompt || ''); // Renamed from User Prompt
+      setNotes(p.dev_prompt || '');      // Renamed from Developer Prompt/Notes
+      setParams(p.params || '{}');
+    }
+  }, [id]);
 
   const handleSave = () => {
     if (!prompt) return;
-    dbService.updatePrompt(prId, prompt);
-    setHasChanges(false);
+    dbService.updatePrompt(id, {
+      name,
+      system_prompt: systemPrompt,
+      user_prompt: devPrompt, 
+      dev_prompt: notes, 
+      params
+    });
+    setDirty(false);
+    triggerRefresh();
   };
 
-  const handleExport = () => {
-    if(!prompt) return;
-    const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(prompt, null, 2));
-    const downloadAnchorNode = document.createElement('a');
-    downloadAnchorNode.setAttribute("href", dataStr);
-    downloadAnchorNode.setAttribute("download", `${prompt.name.replace(/\s+/g, '_')}.json`);
-    document.body.appendChild(downloadAnchorNode);
-    downloadAnchorNode.click();
-    downloadAnchorNode.remove();
+  const handleDelete = () => {
+    if (!prompt) return;
+    dbService.deletePrompt(id);
+    triggerRefresh();
+    navigate(`/project/${projectId}/bot/${botId}`);
   };
 
-  const handleCopy = () => {
-    if(!prompt) return;
-    const fullText = `${prompt.system_prompt}\n\n${prompt.user_prompt}`;
-    navigator.clipboard.writeText(fullText);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const handleChange = (setter: React.Dispatch<React.SetStateAction<string>>, val: string) => {
+    setter(val);
+    setDirty(true);
   };
 
-  // Hotkey for save
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
-        e.preventDefault();
-        handleSave();
-      }
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [prompt]);
-
-  if (loading) return <div>Loading...</div>;
-  if (!prompt) return <div>Prompt not found</div>;
+  if (!prompt) return <div className="p-4 text-slate-500">Loading prompt...</div>;
 
   return (
     <div className="h-full flex flex-col">
       {/* Header */}
-      <div className="flex items-center justify-between mb-4 pb-4 border-b border-slate-200 dark:border-slate-800">
-        <div className="flex items-center gap-2">
-          <Link to={`/project/${pId}/bot/${bId}`} className="p-1 hover:bg-slate-100 dark:hover:bg-slate-800 rounded text-slate-500 dark:text-slate-400">
-            <ChevronRight className="w-5 h-5 rotate-180" />
-          </Link>
-          <input 
-            type="text" 
-            value={prompt.name} 
-            onChange={(e) => handleChange('name', e.target.value)}
-            className="font-bold text-xl text-slate-900 dark:text-white bg-transparent border border-transparent hover:border-slate-300 dark:hover:border-slate-600 focus:border-blue-500 rounded px-2 py-1 -ml-2 outline-none transition-colors"
-          />
-          {hasChanges && <span className="text-xs text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-900/20 px-2 py-1 rounded-full">Unsaved Changes</span>}
+      <div className="flex items-center justify-between mb-4 pb-4 border-b border-slate-200 dark:border-slate-700">
+        <div className="flex items-center flex-1 mr-4">
+          <Button variant="ghost" size="sm" onClick={() => navigate(-1)} className="mr-2">
+            <ArrowLeft className="w-4 h-4" />
+          </Button>
+          <div className="flex-1">
+            <input 
+              type="text" 
+              value={name} 
+              onChange={(e) => handleChange(setName, e.target.value)}
+              className="text-xl font-bold text-slate-900 dark:text-white bg-transparent border-none focus:ring-0 w-full p-0"
+              placeholder="Prompt Name"
+            />
+             <div className="text-xs text-slate-400 dark:text-slate-500 mt-1 flex items-center gap-2">
+               <span>ID: {prompt.id}</span>
+             </div>
+          </div>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={handleExport} icon={<ExternalLink className="w-4 h-4" />}>Export</Button>
-          <Button variant="outline" size="sm" onClick={handleCopy} icon={<Copy className="w-4 h-4" />}>{copied ? 'Copied!' : 'Copy'}</Button>
-          <Button onClick={handleSave} disabled={!hasChanges} icon={<Save className="w-4 h-4" />}>Save</Button>
+           <Button 
+             variant="danger" 
+             size="sm" 
+             onClick={() => setDeleteModalOpen(true)}
+             icon={<Trash2 className="w-4 h-4"/>}
+           >
+             Delete
+           </Button>
+           <Button 
+             onClick={handleSave} 
+             disabled={!dirty}
+             variant={dirty ? 'primary' : 'secondary'}
+             icon={<Save className="w-4 h-4"/>}
+           >
+             {dirty ? 'Save Changes' : 'Saved'}
+           </Button>
         </div>
       </div>
 
-      {/* Grid Layout */}
-      <div className="flex-1 grid grid-cols-12 gap-6 overflow-hidden">
+      {/* Editor Grid */}
+      <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-6 overflow-hidden min-h-0">
         
-        {/* Left Column: System & User Prompt */}
-        <div className="col-span-8 flex flex-col gap-4 h-full overflow-y-auto pr-2 scrollbar-thin">
-          
-          <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col transition-colors">
-            <div className="bg-slate-50 dark:bg-slate-900/50 px-4 py-2 border-b border-slate-200 dark:border-slate-700 font-medium text-sm text-slate-700 dark:text-slate-300 flex justify-between items-center">
-              System Prompt
-            </div>
-            <textarea 
-              className="w-full p-4 min-h-[150px] resize-y outline-none font-mono text-sm text-slate-800 dark:text-slate-200 bg-transparent placeholder-slate-400 dark:placeholder-slate-600"
+        {/* Left Column */}
+        <div className="flex flex-col gap-4 min-h-0 overflow-y-auto pr-2">
+          <div className="flex-1 flex flex-col">
+            <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2 flex items-center">
+              <Settings className="w-4 h-4 mr-1.5" /> System Prompt
+            </label>
+            <textarea
+              value={systemPrompt}
+              onChange={(e) => handleChange(setSystemPrompt, e.target.value)}
+              className="flex-1 w-full p-3 text-sm border border-slate-300 dark:border-slate-600 rounded-md focus:ring-2 focus:ring-blue-500 dark:bg-slate-800 dark:text-slate-100 resize-none"
               placeholder="You are a helpful assistant..."
-              value={prompt.system_prompt}
-              onChange={(e) => handleChange('system_prompt', e.target.value)}
+              style={{ minHeight: '200px' }}
             />
           </div>
-
-          <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm flex-1 flex flex-col min-h-[300px] transition-colors">
-            <div className="bg-slate-50 dark:bg-slate-900/50 px-4 py-2 border-b border-slate-200 dark:border-slate-700 font-medium text-sm text-slate-700 dark:text-slate-300">
-              Developer Prompt
-            </div>
-            <textarea 
-              className="w-full p-4 flex-1 resize-none outline-none font-mono text-sm text-slate-800 dark:text-slate-200 bg-transparent leading-relaxed placeholder-slate-400 dark:placeholder-slate-600"
-              placeholder="Enter your main prompt here..."
-              value={prompt.user_prompt}
-              onChange={(e) => handleChange('user_prompt', e.target.value)}
+          
+           <div className="flex-1 flex flex-col">
+            <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2 flex items-center">
+              <FileText className="w-4 h-4 mr-1.5" /> Developer Prompt
+            </label>
+            <textarea
+              value={devPrompt}
+              onChange={(e) => handleChange(setDevPrompt, e.target.value)}
+              className="flex-1 w-full p-3 text-sm border border-slate-300 dark:border-slate-600 rounded-md focus:ring-2 focus:ring-blue-500 dark:bg-slate-800 dark:text-slate-100 resize-none font-mono"
+              placeholder="Enter main user prompt/canvas here..."
+              style={{ minHeight: '200px' }}
             />
           </div>
-
         </div>
 
-        {/* Right Column: Params & Dev Notes */}
-        <div className="col-span-4 flex flex-col gap-4 h-full overflow-y-auto pl-1 scrollbar-thin">
-          
-           <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col h-1/2 transition-colors">
-            <div className="bg-slate-50 dark:bg-slate-900/50 px-4 py-2 border-b border-slate-200 dark:border-slate-700 font-medium text-sm text-slate-700 dark:text-slate-300 flex justify-between">
-              <span>Parameters</span>
-              <span className="text-xs text-slate-400 font-mono">JSON</span>
-            </div>
-            <div className="flex-1 relative">
+        {/* Right Column */}
+        <div className="flex flex-col gap-4 min-h-0 overflow-y-auto pr-2">
+          <div className="flex-1 flex flex-col">
+            <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2 flex items-center">
+              <Settings className="w-4 h-4 mr-1.5" /> Parameters (JSON)
+            </label>
+            <div className="flex-1 border border-slate-300 dark:border-slate-600 rounded-md overflow-hidden bg-white dark:bg-slate-800" style={{ minHeight: '200px' }}>
               <JsonEditor 
-                value={prompt.params} 
-                onChange={(v) => handleChange('params', v)} 
+                value={params} 
+                onChange={(val) => handleChange(setParams, val)} 
               />
             </div>
           </div>
 
-          <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm flex flex-col h-1/2 transition-colors">
-            <div className="bg-slate-50 dark:bg-slate-900/50 px-4 py-2 border-b border-slate-200 dark:border-slate-700 font-medium text-sm text-slate-700 dark:text-slate-300">
-              Notes
-            </div>
-            <textarea 
-              className="w-full p-4 flex-1 resize-none outline-none text-sm text-slate-600 dark:text-slate-300 bg-transparent placeholder-slate-400 dark:placeholder-slate-600"
-              placeholder="Notes about logic, chain of thought requirements, etc..."
-              value={prompt.dev_prompt}
-              onChange={(e) => handleChange('dev_prompt', e.target.value)}
+          <div className="flex-1 flex flex-col">
+            <label className="text-sm font-medium text-slate-700 dark:text-slate-300 mb-2 flex items-center">
+              <FileText className="w-4 h-4 mr-1.5" /> Notes
+            </label>
+            <textarea
+              value={notes}
+              onChange={(e) => handleChange(setNotes, e.target.value)}
+              className="flex-1 w-full p-3 text-sm border border-slate-300 dark:border-slate-600 rounded-md focus:ring-2 focus:ring-blue-500 dark:bg-slate-800 dark:text-slate-100 resize-none"
+              placeholder="Internal developer notes..."
+              style={{ minHeight: '200px' }}
             />
           </div>
-
         </div>
+
       </div>
+
+      {/* Delete Prompt Modal */}
+      <DeleteResourceModal 
+        isOpen={deleteModalOpen}
+        resourceType="Prompt"
+        resourceName={name}
+        onConfirm={handleDelete}
+        onCancel={() => setDeleteModalOpen(false)}
+      />
     </div>
   );
 };
 
-// --- Main App Wrapper ---
+// --- Main App ---
 
-const App = () => {
+const Main = () => {
   const [dbLoaded, setDbLoaded] = useState(false);
+  const [refresh, setRefresh] = useState(0);
 
-  const handleSaveDb = () => {
+  const triggerRefresh = useCallback(() => {
+    setRefresh(prev => prev + 1);
+  }, []);
+
+  const handleSaveDb = async () => {
     try {
       const data = dbService.export();
       const blob = new Blob([data], { type: 'application/x-sqlite3' });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `prompts_backup_${new Date().toISOString().slice(0,10)}.sqlite`;
+      a.download = `prompts_${new Date().toISOString().slice(0, 10)}.sqlite`;
       a.click();
       window.URL.revokeObjectURL(url);
     } catch (e) {
-      alert("Failed to save database.");
+      console.error("Failed to save DB", e);
+      alert("Failed to save database");
     }
   };
 
@@ -592,17 +757,19 @@ const App = () => {
   }
 
   return (
-    <HashRouter>
-      <Layout onSaveDb={handleSaveDb}>
-        <Routes>
-          <Route path="/" element={<Dashboard />} />
-          <Route path="/project/:projectId" element={<ProjectDetail />} />
-          <Route path="/project/:projectId/bot/:botId" element={<BotDetail />} />
-          <Route path="/project/:projectId/bot/:botId/prompt/:promptId" element={<PromptEditor />} />
-        </Routes>
-      </Layout>
-    </HashRouter>
+    <AppContext.Provider value={{ refresh, triggerRefresh }}>
+      <HashRouter>
+        <Layout onSaveDb={handleSaveDb}>
+          <Routes>
+            <Route path="/" element={<Dashboard />} />
+            <Route path="/project/:projectId" element={<ProjectDetail />} />
+            <Route path="/project/:projectId/bot/:botId" element={<BotDetail />} />
+            <Route path="/project/:projectId/bot/:botId/prompt/:promptId" element={<PromptEditor />} />
+          </Routes>
+        </Layout>
+      </HashRouter>
+    </AppContext.Provider>
   );
 };
 
-export default App;
+export default Main;

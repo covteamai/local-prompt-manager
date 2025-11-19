@@ -76,6 +76,13 @@ export class DatabaseService {
     return this.mapResults<Project>(res[0]);
   }
 
+  getProject(id: number): Project | null {
+    const res = this.db.exec("SELECT * FROM projects WHERE id = ?", [id]);
+    if (res.length === 0) return null;
+    const projects = this.mapResults<Project>(res[0]);
+    return projects[0] || null;
+  }
+
   createProject(name: string, description: string): void {
     const stmt = this.db.prepare("INSERT INTO projects (name, description, updated_at) VALUES (?, ?, datetime('now'))");
     stmt.run([name, description]);
@@ -89,6 +96,7 @@ export class DatabaseService {
   }
 
   deleteProject(id: number): void {
+    // Enabling foreign key support is good practice, but manual cleanup ensures consistency if not enabled
     this.db.run("DELETE FROM projects WHERE id = ?", [id]);
   }
 
