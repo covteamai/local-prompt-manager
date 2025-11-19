@@ -1,3 +1,4 @@
+
 import { Project, Bot, Prompt } from '../types';
 
 // We define the SQL.js type loosely as it comes from the window object
@@ -9,6 +10,7 @@ declare global {
 
 export class DatabaseService {
   private db: any = null;
+  private fileHandle: FileSystemFileHandle | null = null;
 
   async init(data?: Uint8Array): Promise<void> {
     if (!window.initSqlJs) {
@@ -27,9 +29,38 @@ export class DatabaseService {
     }
   }
 
+  // Set the file handle for subsequent saves
+  setFileHandle(handle: FileSystemFileHandle | null) {
+    this.fileHandle = handle;
+  }
+
+  hasFileHandle(): boolean {
+    return !!this.fileHandle;
+  }
+
+  getFileName(): string {
+    return this.fileHandle ? this.fileHandle.name : '';
+  }
+
   export(): Uint8Array {
     if (!this.db) throw new Error("Database not initialized");
     return this.db.export();
+  }
+
+  // Save directly to disk if handle exists, otherwise return false
+  async saveToDisk(): Promise<boolean> {
+    if (!this.db || !this.fileHandle) return false;
+    
+    try {
+      const data = this.db.export();
+      const writable = await this.fileHandle.createWritable();
+      await writable.write(data);
+      await writable.close();
+      return true;
+    } catch (e) {
+      console.error("Error saving to disk:", e);
+      throw e;
+    }
   }
 
   private initSchema() {

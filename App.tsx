@@ -1,3 +1,4 @@
+
 import React, { useState, useEffect, useCallback, useContext } from 'react';
 import { HashRouter, Routes, Route, useNavigate, useParams, Link, useLocation } from 'react-router-dom';
 import { 
@@ -18,7 +19,10 @@ import {
   Moon,
   Sun,
   AlertTriangle,
-  ArrowLeft
+  ArrowLeft,
+  HardDrive,
+  CheckCircle2,
+  RefreshCw
 } from 'lucide-react';
 import { Loader } from './components/Loader';
 import { Button } from './components/Button';
@@ -145,7 +149,7 @@ const SidebarItem: React.FC<{ to: string, icon: React.ReactNode, label: string, 
 
 // --- Layout ---
 
-const Layout: React.FC<{ children: React.ReactNode, onSaveDb: () => void }> = ({ children, onSaveDb }) => {
+const Layout: React.FC<{ children: React.ReactNode, onSaveDb: () => void, isSaving: boolean, saveStatus: string }> = ({ children, onSaveDb, isSaving, saveStatus }) => {
   const { refresh, triggerRefresh } = useApp();
   const projects = useProjects(refresh);
   const navigate = useNavigate();
@@ -180,6 +184,9 @@ const Layout: React.FC<{ children: React.ReactNode, onSaveDb: () => void }> = ({
     setNewProjectModal(false);
     triggerRefresh();
   };
+
+  const hasHandle = dbService.hasFileHandle();
+  const fileName = dbService.getFileName();
 
   return (
     <div className="flex h-screen bg-slate-50 dark:bg-slate-950 transition-colors">
@@ -218,24 +225,41 @@ const Layout: React.FC<{ children: React.ReactNode, onSaveDb: () => void }> = ({
           </div>
         </div>
 
-        <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900 flex gap-2">
-          <Button 
-            onClick={onSaveDb} 
-            variant="outline" 
-            size="sm" 
-            className="flex-1 justify-center"
-            icon={<Download className="w-4 h-4" />}
-          >
-            Save DB
-          </Button>
-           <Button 
-            onClick={() => setDarkMode(!darkMode)} 
-            variant="ghost" 
-            size="sm" 
-            className="px-2"
-          >
-            {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-          </Button>
+        <div className="p-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-900">
+          
+          {/* File Info Status */}
+          {hasHandle && (
+            <div className="mb-2 flex items-center text-xs text-slate-500 dark:text-slate-400 truncate" title={`Saving to: ${fileName}`}>
+               <HardDrive className="w-3 h-3 mr-1.5" />
+               <span className="truncate">{fileName}</span>
+            </div>
+          )}
+
+          <div className="flex gap-2">
+            <Button 
+              onClick={onSaveDb} 
+              variant={hasHandle ? "primary" : "outline"}
+              size="sm" 
+              className="flex-1 justify-center"
+              icon={isSaving ? <RefreshCw className="w-4 h-4 animate-spin"/> : (hasHandle ? <Save className="w-4 h-4" /> : <Download className="w-4 h-4" />)}
+              disabled={isSaving}
+            >
+              {isSaving ? 'Saving...' : (hasHandle ? 'Save' : 'Download DB')}
+            </Button>
+             <Button 
+              onClick={() => setDarkMode(!darkMode)} 
+              variant="ghost" 
+              size="sm" 
+              className="px-2"
+            >
+              {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </Button>
+          </div>
+          {saveStatus && (
+             <div className="mt-1 text-xs text-center text-green-600 dark:text-green-400 animate-fade-in">
+               {saveStatus}
+             </div>
+          )}
         </div>
       </div>
 
@@ -249,6 +273,7 @@ const Layout: React.FC<{ children: React.ReactNode, onSaveDb: () => void }> = ({
           )}
           <div className="flex-1 font-medium text-slate-800 dark:text-slate-100 truncate flex items-center">
              <span className="text-slate-400 dark:text-slate-500 mr-2">Local Workspace</span>
+             {hasHandle && <span className="bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300 text-xs px-2 py-0.5 rounded-full">Persistent</span>}
           </div>
         </header>
         <main className="flex-1 overflow-auto p-6">
@@ -731,24 +756,41 @@ const PromptEditor = () => {
 const Main = () => {
   const [dbLoaded, setDbLoaded] = useState(false);
   const [refresh, setRefresh] = useState(0);
+  const [isSaving, setIsSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState('');
 
   const triggerRefresh = useCallback(() => {
     setRefresh(prev => prev + 1);
   }, []);
 
   const handleSaveDb = async () => {
+    setIsSaving(true);
+    setSaveStatus('');
     try {
-      const data = dbService.export();
-      const blob = new Blob([data], { type: 'application/x-sqlite3' });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `prompts_${new Date().toISOString().slice(0, 10)}.sqlite`;
-      a.click();
-      window.URL.revokeObjectURL(url);
+      // 1. Try saving to File Handle if exists
+      const success = await dbService.saveToDisk();
+      
+      if (success) {
+        setSaveStatus('Saved to disk!');
+        setTimeout(() => setSaveStatus(''), 3000);
+      } else {
+        // 2. Fallback to Download
+        const data = dbService.export();
+        const blob = new Blob([data], { type: 'application/x-sqlite3' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `prompts_${new Date().toISOString().slice(0, 10)}.sqlite`;
+        a.click();
+        window.URL.revokeObjectURL(url);
+        setSaveStatus('Downloaded');
+        setTimeout(() => setSaveStatus(''), 3000);
+      }
     } catch (e) {
       console.error("Failed to save DB", e);
-      alert("Failed to save database");
+      alert("Failed to save database: " + e);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -759,7 +801,7 @@ const Main = () => {
   return (
     <AppContext.Provider value={{ refresh, triggerRefresh }}>
       <HashRouter>
-        <Layout onSaveDb={handleSaveDb}>
+        <Layout onSaveDb={handleSaveDb} isSaving={isSaving} saveStatus={saveStatus}>
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/project/:projectId" element={<ProjectDetail />} />
