@@ -77,16 +77,19 @@ const usePrompts = (botId: number | undefined, refreshTrigger: number) => {
 const EditResourceModal: React.FC<{
   isOpen: boolean;
   title: string;
-  initialValue: string;
-  onSave: (newValue: string) => void;
+  initialName: string;
+  initialDescription?: string;
+  onSave: (name: string, description: string) => void;
   onCancel: () => void;
-}> = ({ isOpen, title, initialValue, onSave, onCancel }) => {
-  const [value, setValue] = useState(initialValue);
+}> = ({ isOpen, title, initialName, initialDescription, onSave, onCancel }) => {
+  const [name, setName] = useState(initialName);
+  const [description, setDescription] = useState(initialDescription || '');
   const inputRef = useRef<HTMLInputElement>(null);
   
   useEffect(() => { 
-    setValue(initialValue); 
-  }, [initialValue, isOpen]);
+    setName(initialName); 
+    setDescription(initialDescription || '');
+  }, [initialName, initialDescription, isOpen]);
 
   useEffect(() => {
     if (isOpen) {
@@ -98,19 +101,34 @@ const EditResourceModal: React.FC<{
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-slate-800 rounded-lg p-6 max-w-sm w-full shadow-xl border border-slate-200 dark:border-slate-700">
+      <div className="bg-white dark:bg-slate-800 rounded-lg p-6 max-w-md w-full shadow-xl border border-slate-200 dark:border-slate-700">
         <h3 className="text-lg font-bold mb-4 text-slate-900 dark:text-white">{title}</h3>
-        <input 
-          ref={inputRef}
-          type="text" 
-          className="w-full border border-slate-300 dark:border-slate-600 bg-transparent dark:text-white rounded-md px-3 py-2 mb-4 focus:ring-2 focus:ring-blue-500 outline-none"
-          value={value}
-          onChange={e => setValue(e.target.value)}
-          onKeyDown={e => { if(e.key === 'Enter') onSave(value); }}
-        />
+        
+        <div className="mb-4">
+          <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">Name</label>
+          <input 
+            ref={inputRef}
+            type="text" 
+            className="w-full border border-slate-300 dark:border-slate-600 bg-transparent dark:text-white rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            onKeyDown={e => { if(e.key === 'Enter' && !e.shiftKey) onSave(name, description); }}
+          />
+        </div>
+
+        <div className="mb-4">
+          <label className="block text-xs font-semibold text-slate-500 dark:text-slate-400 uppercase tracking-wider mb-1">Description</label>
+          <textarea 
+            className="w-full border border-slate-300 dark:border-slate-600 bg-transparent dark:text-white rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none resize-none h-24 text-sm"
+            value={description}
+            onChange={e => setDescription(e.target.value)}
+            placeholder="Optional description..."
+          />
+        </div>
+
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onCancel}>Cancel</Button>
-          <Button onClick={() => onSave(value)}>Save</Button>
+          <Button onClick={() => onSave(name, description)}>Save</Button>
         </div>
       </div>
     </div>
@@ -448,17 +466,17 @@ const ProjectDetail = () => {
     navigate('/');
   };
 
-  const handleUpdateProject = (newName: string) => {
+  const handleUpdateProject = (newName: string, newDesc: string) => {
     if(project) {
-        dbService.updateProject(project.id, newName, project.description || '');
+        dbService.updateProject(project.id, newName, newDesc);
         triggerRefresh();
         setEditProjectModalOpen(false);
     }
   };
 
-  const handleUpdateBot = (newName: string) => {
+  const handleUpdateBot = (newName: string, newDesc: string) => {
       if(botToEdit) {
-          dbService.updateBot(botToEdit.id, newName, botToEdit.description || '');
+          dbService.updateBot(botToEdit.id, newName, newDesc);
           triggerRefresh();
           setBotToEdit(null);
       }
@@ -551,7 +569,7 @@ const ProjectDetail = () => {
                 </div>
                 <div>
                   <h3 className="font-bold text-slate-900 dark:text-slate-100">{bot.name}</h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">{bot.description || 'No description'}</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-1">{bot.description || 'No description'}</p>
                 </div>
               </div>
               <div className="text-xs text-slate-400 dark:text-slate-500 mt-4 pt-3 border-t border-slate-100 dark:border-slate-700 flex justify-between">
@@ -582,16 +600,18 @@ const ProjectDetail = () => {
 
       <EditResourceModal
         isOpen={editProjectModalOpen}
-        title="Edit Project Name"
-        initialValue={project.name}
+        title="Edit Project Details"
+        initialName={project.name}
+        initialDescription={project.description}
         onSave={handleUpdateProject}
         onCancel={() => setEditProjectModalOpen(false)}
       />
 
       <EditResourceModal
         isOpen={!!botToEdit}
-        title="Edit Bot Name"
-        initialValue={botToEdit?.name || ''}
+        title="Edit Bot Details"
+        initialName={botToEdit?.name || ''}
+        initialDescription={botToEdit?.description || ''}
         onSave={handleUpdateBot}
         onCancel={() => setBotToEdit(null)}
       />
@@ -646,9 +666,9 @@ const BotDetail = () => {
     triggerRefresh();
   };
 
-  const handleUpdateBot = (newName: string) => {
+  const handleUpdateBot = (newName: string, newDesc: string) => {
     if(bot) {
-        dbService.updateBot(bot.id, newName, bot.description || '');
+        dbService.updateBot(bot.id, newName, newDesc);
         triggerRefresh();
         setEditBotModalOpen(false);
     }
@@ -676,6 +696,12 @@ const BotDetail = () => {
         </div>
         <Button icon={<Plus className="w-4 h-4"/>} onClick={handleCreate}>New Prompt</Button>
       </div>
+      
+      {bot?.description && (
+         <div className="mb-6 text-slate-600 dark:text-slate-400 bg-slate-50 dark:bg-slate-900/50 p-4 rounded-md border border-slate-100 dark:border-slate-800">
+           {bot.description}
+         </div>
+      )}
 
       <div className="space-y-3">
         {prompts.length === 0 && (
@@ -727,8 +753,9 @@ const BotDetail = () => {
 
       <EditResourceModal
         isOpen={editBotModalOpen}
-        title="Edit Bot Name"
-        initialValue={bot?.name || ''}
+        title="Edit Bot Details"
+        initialName={bot?.name || ''}
+        initialDescription={bot?.description || ''}
         onSave={handleUpdateBot}
         onCancel={() => setEditBotModalOpen(false)}
       />
