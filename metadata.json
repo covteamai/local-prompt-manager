@@ -1,0 +1,5 @@
+{
+  "name": "Local Prompt Manager",
+  "description": "A hierarchical AI prompt manager using local SQLite for storage. Organize Projects, Bots, and Prompts entirely in the browser.",
+  "requestFramePermissions": []
+}
