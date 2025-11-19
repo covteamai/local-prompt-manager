@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback, useContext } from 'react';
+import React, { useState, useEffect, useCallback, useContext, useRef } from 'react';
 import { HashRouter, Routes, Route, useNavigate, useParams, Link, useLocation } from 'react-router-dom';
 import { 
   Folder, 
@@ -22,7 +22,9 @@ import {
   ArrowLeft,
   HardDrive,
   CheckCircle2,
-  RefreshCw
+  RefreshCw,
+  Edit2,
+  Pencil
 } from 'lucide-react';
 import { Loader } from './components/Loader';
 import { Button } from './components/Button';
@@ -72,6 +74,49 @@ const usePrompts = (botId: number | undefined, refreshTrigger: number) => {
 
 // --- Components ---
 
+const EditResourceModal: React.FC<{
+  isOpen: boolean;
+  title: string;
+  initialValue: string;
+  onSave: (newValue: string) => void;
+  onCancel: () => void;
+}> = ({ isOpen, title, initialValue, onSave, onCancel }) => {
+  const [value, setValue] = useState(initialValue);
+  const inputRef = useRef<HTMLInputElement>(null);
+  
+  useEffect(() => { 
+    setValue(initialValue); 
+  }, [initialValue, isOpen]);
+
+  useEffect(() => {
+    if (isOpen) {
+      setTimeout(() => inputRef.current?.focus(), 50);
+    }
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+      <div className="bg-white dark:bg-slate-800 rounded-lg p-6 max-w-sm w-full shadow-xl border border-slate-200 dark:border-slate-700">
+        <h3 className="text-lg font-bold mb-4 text-slate-900 dark:text-white">{title}</h3>
+        <input 
+          ref={inputRef}
+          type="text" 
+          className="w-full border border-slate-300 dark:border-slate-600 bg-transparent dark:text-white rounded-md px-3 py-2 mb-4 focus:ring-2 focus:ring-blue-500 outline-none"
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onKeyDown={e => { if(e.key === 'Enter') onSave(value); }}
+        />
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost" onClick={onCancel}>Cancel</Button>
+          <Button onClick={() => onSave(value)}>Save</Button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const DeleteResourceModal: React.FC<{
   isOpen: boolean;
   resourceType: 'Project' | 'Bot' | 'Prompt';
@@ -80,9 +125,13 @@ const DeleteResourceModal: React.FC<{
   onCancel: () => void;
 }> = ({ isOpen, resourceType, resourceName, onConfirm, onCancel }) => {
   const [input, setInput] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
   
   useEffect(() => {
-    if (isOpen) setInput('');
+    if (isOpen) {
+      setInput('');
+      setTimeout(() => inputRef.current?.focus(), 50);
+    }
   }, [isOpen]);
 
   if (!isOpen) return null;
@@ -109,12 +158,12 @@ const DeleteResourceModal: React.FC<{
             Please type <span className="font-mono font-bold select-all">{resourceName}</span> to confirm.
           </label>
           <input
+            ref={inputRef}
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
             className="w-full border border-slate-300 dark:border-slate-600 bg-slate-50 dark:bg-slate-900 dark:text-white rounded-md px-3 py-2 focus:ring-2 focus:ring-red-500 focus:border-red-500 outline-none transition-colors"
             placeholder={resourceName}
-            autoFocus
           />
         </div>
 
@@ -157,6 +206,7 @@ const Layout: React.FC<{ children: React.ReactNode, onSaveDb: () => void, isSavi
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [newProjectModal, setNewProjectModal] = useState(false);
   const [newProjectName, setNewProjectName] = useState('');
+  const inputRef = useRef<HTMLInputElement>(null);
   
   // Theme State
   const [darkMode, setDarkMode] = useState(() => {
@@ -176,6 +226,12 @@ const Layout: React.FC<{ children: React.ReactNode, onSaveDb: () => void, isSavi
       localStorage.setItem('theme', 'light');
     }
   }, [darkMode]);
+
+  useEffect(() => {
+    if(newProjectModal) {
+      setTimeout(() => inputRef.current?.focus(), 50);
+    }
+  }, [newProjectModal]);
 
   const handleCreateProject = () => {
     if (!newProjectName.trim()) return;
@@ -287,12 +343,13 @@ const Layout: React.FC<{ children: React.ReactNode, onSaveDb: () => void, isSavi
           <div className="bg-white dark:bg-slate-800 rounded-lg p-6 w-full max-w-sm border border-slate-200 dark:border-slate-700 shadow-xl">
             <h3 className="text-lg font-bold mb-4 text-slate-900 dark:text-white">New Project</h3>
             <input 
+              ref={inputRef}
               type="text" 
               placeholder="Project Name" 
               className="w-full border border-slate-300 dark:border-slate-600 bg-transparent dark:text-white rounded-md px-3 py-2 mb-4 focus:ring-2 focus:ring-blue-500 outline-none"
               value={newProjectName}
               onChange={e => setNewProjectName(e.target.value)}
-              autoFocus
+              onKeyDown={e => { if(e.key === 'Enter') handleCreateProject(); }}
             />
             <div className="flex justify-end gap-2">
               <Button variant="ghost" onClick={() => setNewProjectModal(false)}>Cancel</Button>
@@ -337,16 +394,27 @@ const ProjectDetail = () => {
   const [project, setProject] = useState<Project | null>(null);
   const [newBotName, setNewBotName] = useState('');
   const [showNewBot, setShowNewBot] = useState(false);
+  const newBotInputRef = useRef<HTMLInputElement>(null);
   
   // Deletion State
   const [deleteProjectModalOpen, setDeleteProjectModalOpen] = useState(false);
   const [botToDelete, setBotToDelete] = useState<Bot | null>(null);
+
+  // Editing State
+  const [editProjectModalOpen, setEditProjectModalOpen] = useState(false);
+  const [botToEdit, setBotToEdit] = useState<Bot | null>(null);
 
   // Fetch Project Details
   useEffect(() => {
     const p = dbService.getProject(id);
     setProject(p);
   }, [id, refresh]);
+
+  useEffect(() => {
+    if(showNewBot) {
+      setTimeout(() => newBotInputRef.current?.focus(), 50);
+    }
+  }, [showNewBot]);
 
   const bots = useBots(id, refresh);
 
@@ -362,6 +430,10 @@ const ProjectDetail = () => {
     setBotToDelete(bot);
   };
 
+  const handleEditBotRequest = (bot: Bot) => {
+    setBotToEdit(bot);
+  };
+
   const confirmDeleteBot = () => {
     if (botToDelete) {
       dbService.deleteBot(botToDelete.id);
@@ -374,6 +446,22 @@ const ProjectDetail = () => {
     dbService.deleteProject(id);
     triggerRefresh();
     navigate('/');
+  };
+
+  const handleUpdateProject = (newName: string) => {
+    if(project) {
+        dbService.updateProject(project.id, newName, project.description || '');
+        triggerRefresh();
+        setEditProjectModalOpen(false);
+    }
+  };
+
+  const handleUpdateBot = (newName: string) => {
+      if(botToEdit) {
+          dbService.updateBot(botToEdit.id, newName, botToEdit.description || '');
+          triggerRefresh();
+          setBotToEdit(null);
+      }
   };
 
   if (!project) {
@@ -392,10 +480,18 @@ const ProjectDetail = () => {
   return (
     <div>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center">
-          <Folder className="w-6 h-6 mr-3 text-slate-400" />
-          {project.name}
-        </h1>
+        <div className="flex items-center gap-3 group">
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white flex items-center">
+            <Folder className="w-6 h-6 mr-3 text-slate-400" />
+            {project.name}
+          </h1>
+          <button 
+            onClick={() => setEditProjectModalOpen(true)}
+            className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-blue-600 dark:hover:text-blue-400"
+          >
+            <Edit2 className="w-4 h-4" />
+          </button>
+        </div>
         <div className="flex gap-3">
            <Button 
              variant="danger" 
@@ -412,12 +508,13 @@ const ProjectDetail = () => {
       {showNewBot && (
         <div className="bg-white dark:bg-slate-800 p-4 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 mb-6 flex items-center gap-4">
            <input 
+              ref={newBotInputRef}
               type="text" 
               placeholder="Bot Name" 
               className="flex-1 border border-slate-300 dark:border-slate-600 bg-transparent dark:text-white rounded-md px-3 py-2 focus:ring-2 focus:ring-blue-500 outline-none"
               value={newBotName}
               onChange={e => setNewBotName(e.target.value)}
-              autoFocus
+              onKeyDown={e => { if(e.key === 'Enter') handleCreateBot(); }}
             />
             <Button onClick={handleCreateBot}>Save</Button>
             <Button variant="ghost" onClick={() => setShowNewBot(false)}>Cancel</Button>
@@ -433,8 +530,17 @@ const ProjectDetail = () => {
         )}
         {bots.map(bot => (
           <div key={bot.id} className="bg-white dark:bg-slate-800 p-5 rounded-lg shadow-sm border border-slate-200 dark:border-slate-700 hover:border-blue-300 dark:hover:border-blue-500 transition-colors group relative">
-             <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity">
-               <button onClick={(e) => { e.preventDefault(); handleDeleteBotRequest(bot); }} className="text-slate-400 hover:text-red-500 dark:hover:text-red-400">
+             <div className="absolute top-4 right-4 opacity-0 group-hover:opacity-100 transition-opacity flex gap-1">
+               <button 
+                 onClick={(e) => { e.preventDefault(); handleEditBotRequest(bot); }} 
+                 className="p-1 text-slate-400 hover:text-blue-600 dark:hover:text-blue-400"
+               >
+                 <Edit2 className="w-4 h-4" />
+               </button>
+               <button 
+                 onClick={(e) => { e.preventDefault(); handleDeleteBotRequest(bot); }} 
+                 className="p-1 text-slate-400 hover:text-red-500 dark:hover:text-red-400"
+               >
                  <Trash2 className="w-4 h-4" />
                </button>
              </div>
@@ -457,7 +563,7 @@ const ProjectDetail = () => {
         ))}
       </div>
 
-      {/* Delete Project Modal */}
+      {/* Modals */}
       <DeleteResourceModal 
         isOpen={deleteProjectModalOpen}
         resourceType="Project"
@@ -466,13 +572,28 @@ const ProjectDetail = () => {
         onCancel={() => setDeleteProjectModalOpen(false)}
       />
 
-      {/* Delete Bot Modal */}
       <DeleteResourceModal 
         isOpen={!!botToDelete}
         resourceType="Bot"
         resourceName={botToDelete?.name || ''}
         onConfirm={confirmDeleteBot}
         onCancel={() => setBotToDelete(null)}
+      />
+
+      <EditResourceModal
+        isOpen={editProjectModalOpen}
+        title="Edit Project Name"
+        initialValue={project.name}
+        onSave={handleUpdateProject}
+        onCancel={() => setEditProjectModalOpen(false)}
+      />
+
+      <EditResourceModal
+        isOpen={!!botToEdit}
+        title="Edit Bot Name"
+        initialValue={botToEdit?.name || ''}
+        onSave={handleUpdateBot}
+        onCancel={() => setBotToEdit(null)}
       />
     </div>
   );
@@ -486,8 +607,17 @@ const BotDetail = () => {
   const prompts = usePrompts(bId, refresh);
   const navigate = useNavigate();
 
+  // Bot State
+  const [bot, setBot] = useState<Bot | null>(null);
+  const [editBotModalOpen, setEditBotModalOpen] = useState(false);
+
   // Deletion State
   const [promptToDelete, setPromptToDelete] = useState<Prompt | null>(null);
+
+  useEffect(() => {
+      const b = dbService.getBot(bId);
+      setBot(b);
+  }, [bId, refresh]);
 
   const handleCreate = () => {
     const id = dbService.createPrompt(bId, "New Prompt");
@@ -516,6 +646,14 @@ const BotDetail = () => {
     triggerRefresh();
   };
 
+  const handleUpdateBot = (newName: string) => {
+    if(bot) {
+        dbService.updateBot(bot.id, newName, bot.description || '');
+        triggerRefresh();
+        setEditBotModalOpen(false);
+    }
+  };
+
   return (
     <div>
        <div className="flex items-center justify-between mb-6">
@@ -524,7 +662,17 @@ const BotDetail = () => {
              Project
           </Link>
           <span className="text-slate-300 dark:text-slate-600 mr-2">/</span>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Prompts</h1>
+          <div className="flex items-center gap-2 group">
+            <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
+                {bot ? bot.name : 'Bot'}
+            </h1>
+            <button 
+                onClick={() => setEditBotModalOpen(true)}
+                className="opacity-0 group-hover:opacity-100 transition-opacity text-slate-400 hover:text-blue-600 dark:hover:text-blue-400"
+            >
+                <Edit2 className="w-4 h-4" />
+            </button>
+          </div>
         </div>
         <Button icon={<Plus className="w-4 h-4"/>} onClick={handleCreate}>New Prompt</Button>
       </div>
@@ -568,13 +716,21 @@ const BotDetail = () => {
         ))}
       </div>
 
-      {/* Delete Prompt Modal */}
+      {/* Modals */}
       <DeleteResourceModal 
         isOpen={!!promptToDelete}
         resourceType="Prompt"
         resourceName={promptToDelete?.name || ''}
         onConfirm={confirmDeletePrompt}
         onCancel={() => setPromptToDelete(null)}
+      />
+
+      <EditResourceModal
+        isOpen={editBotModalOpen}
+        title="Edit Bot Name"
+        initialValue={bot?.name || ''}
+        onSave={handleUpdateBot}
+        onCancel={() => setEditBotModalOpen(false)}
       />
     </div>
   );
@@ -596,6 +752,7 @@ const PromptEditor = () => {
   const [devPrompt, setDevPrompt] = useState(''); // Mapped to user_prompt in DB
   const [notes, setNotes] = useState('');         // Mapped to dev_prompt in DB
   const [params, setParams] = useState('');
+  const nameInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     const p = dbService.getPrompt(id);
@@ -644,20 +801,27 @@ const PromptEditor = () => {
           <Button variant="ghost" size="sm" onClick={() => navigate(-1)} className="mr-2">
             <ArrowLeft className="w-4 h-4" />
           </Button>
-          <div className="flex-1">
+          <div className="flex-1 flex items-center gap-2 group relative">
             <input 
+              ref={nameInputRef}
               type="text" 
               value={name} 
               onChange={(e) => handleChange(setName, e.target.value)}
-              className="text-xl font-bold text-slate-900 dark:text-white bg-transparent border-none focus:ring-0 w-full p-0"
+              className="text-xl font-bold text-slate-900 dark:text-white bg-transparent border border-transparent hover:border-slate-300 dark:hover:border-slate-600 focus:border-blue-500 focus:ring-0 rounded px-1 -ml-1 w-full transition-all"
               placeholder="Prompt Name"
             />
-             <div className="text-xs text-slate-400 dark:text-slate-500 mt-1 flex items-center gap-2">
-               <span>ID: {prompt.id}</span>
-             </div>
+            <button 
+                onClick={() => nameInputRef.current?.focus()}
+                className="text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity absolute right-2"
+            >
+                <Pencil className="w-3 h-3" />
+            </button>
+          </div>
+          <div className="text-xs text-slate-400 dark:text-slate-500 ml-4 whitespace-nowrap flex items-center gap-2">
+             <span>ID: {prompt.id}</span>
           </div>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 ml-4">
            <Button 
              variant="danger" 
              size="sm" 

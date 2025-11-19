@@ -139,6 +139,13 @@ export class DatabaseService {
     return this.mapResults<Bot>(res[0]);
   }
 
+  getBot(id: number): Bot | null {
+    const res = this.db.exec("SELECT * FROM bots WHERE id = ?", [id]);
+    if (res.length === 0) return null;
+    const bots = this.mapResults<Bot>(res[0]);
+    return bots[0] || null;
+  }
+
   createBot(projectId: number, name: string, description: string): void {
     const stmt = this.db.prepare("INSERT INTO bots (project_id, name, description, updated_at) VALUES (?, ?, ?, datetime('now'))");
     stmt.run([projectId, name, description]);
